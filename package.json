@@ -1,0 +1,22 @@
+{
+  "name": "pfba",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Personal Finance Command Center — static web app backed by Google Sheets, Calendar and Tasks",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
+    "preview": "vite preview --config client/vite.config.js",
+    "migrate": "node scripts/migrate-to-sheets.js"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "better-sqlite3": "^12.11.1",
+    "lucide-react": "^0.469.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1",
+    "vite": "^6.0.7"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+# Local finance data and backups — never commit
+data/
+data/backups/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
