@@ -26,6 +26,7 @@ A free, static web app (hosted on GitHub Pages) that runs entirely in your brows
    - **Google Sheets API**
    - **Google Calendar API**
    - **Google Tasks API**
+   - **Google Picker API** (for *Choose from Google Drive*)
 
 ### 2. Configure the OAuth consent screen
 
@@ -36,6 +37,7 @@ A free, static web app (hosted on GitHub Pages) that runs entirely in your brows
    - `.../auth/calendar.events`
    - `.../auth/calendar.calendarlist.readonly` (lets the app list your calendars so it can show and pick them)
    - `.../auth/tasks`
+   - `.../auth/drive.file` (lets the Drive picker open the spreadsheet you choose; the app sees only files you pick or it created)
    - `openid`, `email`, `profile`
 4. Under **Audience → Test users**, add **every Google account you'll connect** (personal, school, work). Accounts that aren't listed can't sign in while the app is in Testing.
 
@@ -53,19 +55,28 @@ A free, static web app (hosted on GitHub Pages) that runs entirely in your brows
 4. No redirect URIs are needed (the app uses the popup token flow). There is **no client secret** to store.
 5. Copy the **Client ID**.
 
+### 3b. Create an API key for the Drive picker (optional)
+
+1. **Credentials → Create credentials → API key**.
+2. Edit the key: **Application restrictions → Websites**, add `https://<your-github-username>.github.io/*` and `http://localhost:5173/*`; **API restrictions → Restrict key → Google Picker API**.
+3. The key is not a secret (it ships in the page), but the restrictions keep others from using it.
+
+Without this key the app still works; you paste the spreadsheet link instead of choosing it from Drive.
+
 ### 4. Configure GitHub
 
 1. Push this repo to GitHub (default branch `main`).
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 3. **Settings → Secrets and variables → Actions → Variables** tab → **New repository variable**:
    - `VITE_GOOGLE_CLIENT_ID` = your client ID
+   - `VITE_GOOGLE_API_KEY` *(optional)*: the API key from step 3b, for *Choose from Google Drive*.
    - `VITE_SHEET_ID` *(optional, recommended after first run)*: the spreadsheet ID, so every device opens the same sheet without asking.
 4. Every push to `main` runs `.github/workflows/deploy.yml`, which builds with `BASE_PATH=/<repo-name>/` and publishes `client/dist` to `https://<username>.github.io/<repo-name>/`.
 
 ### 5. First sign-in
 
 1. Open the site and click **Sign in with Google**. The account you choose becomes the **primary** account. It owns the spreadsheet and is the only one that gets the Sheets scope.
-2. Choose **Create a new spreadsheet** (named *PFBA Command Center*) or paste the link to an existing one.
+2. Choose **Create a new spreadsheet** (named *PFBA Command Center*), **Choose from Google Drive**, or paste the link to an existing one.
 3. Copy the spreadsheet ID from **Settings → Spreadsheet** into the `VITE_SHEET_ID` repo variable so phones and other browsers open it automatically.
 4. In **Settings → Add account**, connect your other Google accounts. Secondary accounts get Calendar + Tasks only.
 

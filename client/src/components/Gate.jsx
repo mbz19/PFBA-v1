@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Command, LogIn, FilePlus2, Link2, Check, Loader2, ArrowRight } from 'lucide-react';
+import { Command, LogIn, FilePlus2, Link2, Check, Loader2, ArrowRight, FolderOpen } from 'lucide-react';
 import { useApp, knownAccounts } from '../state.jsx';
 import { isConfigured } from '../lib/auth.js';
+import { isPickerConfigured, preloadPicker, pickSpreadsheet } from '../lib/picker.js';
 import { AccountDot } from './ui.jsx';
 
 // Everything before the app is usable: sign in with the primary Google
@@ -11,7 +12,29 @@ import { AccountDot } from './ui.jsx';
 export default function Gate() {
   const { phase, error, primary, signIn, createSheet, openExistingSheet, signOut } = useApp();
   const [sheetInput, setSheetInput] = useState('');
+  const canPick = isPickerConfigured();
+  const [showPaste, setShowPaste] = useState(!canPick);
+  const [picking, setPicking] = useState(false);
+  const [pickError, setPickError] = useState(null);
   const remembered = knownAccounts();
+
+  // Load the picker while the user reads the screen so the button opens it fast.
+  useEffect(() => {
+    if (phase === 'needs-sheet' && canPick) preloadPicker().catch(() => {});
+  }, [phase, canPick]);
+
+  const chooseFromDrive = async () => {
+    setPickError(null);
+    setPicking(true);
+    try {
+      const doc = await pickSpreadsheet(primary);
+      if (doc) await openExistingSheet(doc.id);
+    } catch (err) {
+      setPickError(err.message);
+    } finally {
+      setPicking(false);
+    }
+  };
   const others = remembered.filter((a) => a.email !== primary);
   const me = remembered.find((a) => a.email === primary);
 
@@ -69,21 +92,37 @@ export default function Gate() {
           <>
             <h2 style={{ margin: '0 0 8px' }}>Choose your spreadsheet</h2>
             <p className="muted" style={{ marginTop: 0 }}>
-              Signed in as <strong>{primary}</strong>. Create a new spreadsheet for your data, or paste the link to one you already use (do this on each new device).
+              Signed in as <strong>{primary}</strong>. Create a new spreadsheet for your data, or choose one you already use (do this on each new device).
             </p>
             <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={createSheet}>
               <FilePlus2 size={16} /> Create a new spreadsheet
             </button>
             <div className="gate-or">or</div>
-            <div className="field">
-              <label>Existing spreadsheet link or ID</label>
-              <input className="input" value={sheetInput} placeholder="https://docs.google.com/spreadsheets/d/…"
-                onChange={(e) => setSheetInput(e.target.value)} />
-            </div>
-            <button className="btn" style={{ width: '100%', justifyContent: 'center' }} disabled={!sheetInput.trim()}
-              onClick={() => openExistingSheet(sheetInput)}>
-              <Link2 size={16} /> Use this spreadsheet
-            </button>
+            {canPick && (
+              <button className="btn" style={{ width: '100%', justifyContent: 'center' }} disabled={picking}
+                onClick={chooseFromDrive}>
+                {picking ? <Loader2 size={16} className="spin" /> : <FolderOpen size={16} />} Choose from Google Drive
+              </button>
+            )}
+            {pickError && <div className="pill neg" style={{ marginTop: 8, whiteSpace: 'normal' }}>{pickError}</div>}
+            {canPick && !showPaste && (
+              <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={() => setShowPaste(true)}>
+                <Link2 size={14} /> Paste a link instead
+              </button>
+            )}
+            {showPaste && (
+              <div style={canPick ? { marginTop: 12 } : undefined}>
+                <div className="field">
+                  <label>Existing spreadsheet link or ID</label>
+                  <input className="input" value={sheetInput} placeholder="https://docs.google.com/spreadsheets/d/…"
+                    onChange={(e) => setSheetInput(e.target.value)} />
+                </div>
+                <button className="btn" style={{ width: '100%', justifyContent: 'center' }} disabled={!sheetInput.trim()}
+                  onClick={() => openExistingSheet(sheetInput)}>
+                  <Link2 size={16} /> Use this spreadsheet
+                </button>
+              </div>
+            )}
             <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={signOut}>Sign out</button>
           </>
         )}

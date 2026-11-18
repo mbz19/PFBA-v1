@@ -18,7 +18,11 @@ const BASE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
   'https://www.googleapis.com/auth/tasks',
 ];
-const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
+const SHEETS_SCOPES = [
+  'https://www.googleapis.com/auth/spreadsheets',
+  // Lets the Drive picker (picker.js) list and open an existing spreadsheet.
+  'https://www.googleapis.com/auth/drive.file',
+];
 
 // Renew on the next tap once a token is this close to expiring.
 const REFRESH_MARGIN = 10 * 60 * 1000;
@@ -29,7 +33,7 @@ const RETRY_AFTER = 60 * 1000;
 const NEEDS_USER = new Set(['interaction_required', 'wrong_account', 'scopes', 'denied']);
 
 export const scopesFor = (isPrimary) =>
-  (isPrimary ? [...BASE_SCOPES, SHEETS_SCOPE] : BASE_SCOPES).join(' ');
+  (isPrimary ? [...BASE_SCOPES, ...SHEETS_SCOPES] : BASE_SCOPES).join(' ');
 
 const tokens = new Map(); // email -> { accessToken, expiresAt, scope }
 const pending = new Map(); // email -> Promise (dedupe concurrent refreshes)
@@ -102,7 +106,7 @@ function startRequest({ scope, prompt, hint }) {
           return done(reject, new AuthError(msg, { email: hint, code }));
         }
         if (!window.google.accounts.oauth2.hasGrantedAllScopes(resp, ...scope.split(' ').filter((s) => s.startsWith('https://')))) {
-          return done(reject, new AuthError('Please allow all requested permissions (Calendar, Tasks and, for the primary account, Sheets).', { email: hint, code: 'scopes' }));
+          return done(reject, new AuthError('Please allow all requested permissions (Calendar, Tasks and, for the primary account, Sheets and Drive).', { email: hint, code: 'scopes' }));
         }
         done(resolve, resp);
       },
@@ -198,6 +202,10 @@ async function getToken(email) {
   await connect(email, { interactive: false });
   return tokens.get(email).accessToken;
 }
+
+// A current access token, for Google widgets (the Drive picker) that take one
+// directly instead of going through authedFetch.
+export const accessToken = (email) => getToken(email);
 
 export function disconnect(email) {
   email = email.toLowerCase();
