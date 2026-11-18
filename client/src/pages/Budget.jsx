@@ -18,7 +18,6 @@ function BudgetRow({ c, isChild, ctx }) {
     allocValue, allocWidth, setDrafts, saveAllocation, setEditCat,
   } = ctx;
   const over = c.overCap;
-  const warn = !over && c.pctUsed > 0.85 && c.budgeted > 0;
   const kids = !isChild ? childrenOf(c.id) : [];
   const isParent = kids.length > 0;
   const open = expanded[c.id];
@@ -74,16 +73,16 @@ function BudgetRow({ c, isChild, ctx }) {
 
         <div className="budget-cell num">{fmt.money(c.actual)}</div>
 
-        <div className="budget-cell num">
+        <div className="budget-cell num rem">
           <span className={over ? 'over-amt' : ''}>
-            {over ? <AlertTriangle size={12} style={{ verticalAlign: -1 }} /> : c.remaining >= 0 ? <Check size={12} className="ok-ic" /> : <Minus size={12} />}
-            {' '}{fmt.money(Math.abs(c.remaining))} {over ? 'over' : 'left'}
+            <span className="rem-icon">
+              {over ? <AlertTriangle size={12} style={{ verticalAlign: -1 }} /> : c.remaining >= 0 ? <Check size={12} className="ok-ic" /> : <Minus size={12} />}
+              {' '}
+            </span>
+            {fmt.money(Math.abs(c.remaining))}<span className="rem-word"> {over ? 'over' : 'left'}</span>
           </span>
         </div>
 
-        <div className="budget-cell bar">
-          <ProgressBar value={c.pctUsed} over={over} warn={warn} />
-        </div>
       </div>
       {isParent && open && kids.map((k) => <BudgetRow key={k.id} c={k} isChild ctx={ctx} />)}
     </>
@@ -217,8 +216,7 @@ export default function Budget() {
                 <div className="budget-cell name">Category<span className="col-resize" onMouseDown={(e) => startResize(e, 'name')} title="Drag to resize" /></div>
                 <div className="budget-cell num">Budgeted<span className="col-resize" onMouseDown={(e) => startResize(e, 'budgeted')} title="Drag to resize" /></div>
                 <div className="budget-cell num">Actual<span className="col-resize" onMouseDown={(e) => startResize(e, 'actual')} title="Drag to resize" /></div>
-                <div className="budget-cell num">Remaining<span className="col-resize" onMouseDown={(e) => startResize(e, 'remaining')} title="Drag to resize" /></div>
-                <div className="budget-cell bar">Progress</div>
+                <div className="budget-cell num rem">Remaining<span className="col-resize" onMouseDown={(e) => startResize(e, 'remaining')} title="Drag to resize" /></div>
               </div>
               {parents.map((p) => <BudgetRow key={p.id} c={p} ctx={rowCtx} />)}
               <div style={{ padding: 12 }}>
