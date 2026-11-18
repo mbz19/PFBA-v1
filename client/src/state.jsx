@@ -142,7 +142,12 @@ export function AppProvider({ children }) {
   const createFinance = useCallback(async (passphrase) => {
     setError(null);
     const legacy = await sheets.readLegacyFinance();
-    await finance.create(passphrase, legacy);
+    try {
+      await finance.create(passphrase, legacy);
+    } catch (err) {
+      setFinanceState(finance.getState()); // e.g. switched to 'locked'
+      throw err;
+    }
     setFinanceState('ready');
     finishOpen(primary, profileName.current);
   }, [primary, finishOpen]);

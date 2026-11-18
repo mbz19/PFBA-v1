@@ -51,6 +51,17 @@ export const FINANCE_TABLES = {
 };
 export const isFinanceTab = (tab) => Object.hasOwn(FINANCE_TABLES, tab);
 
+// Rows that are unique by meaning rather than by id: one allocation per
+// month + category, one expected income per month. Their id is derived from
+// that meaning, so two devices editing the same thing before syncing write
+// the same row (newer edit wins) instead of creating duplicates.
+export function naturalId(tab, row) {
+  if (tab !== 'Budget') return null;
+  if (row.kind === 'allocation') return `alloc:${row.month}:${row.category_id}`;
+  if (row.kind === 'income') return `income:${row.month}`;
+  return null;
+}
+
 // Tabs the spreadsheet still holds (plus one tab per workout).
 export const SHEET_TABS = ['Settings'];
 

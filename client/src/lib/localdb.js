@@ -13,12 +13,12 @@
 // the same row wins, and deletions propagate.
 
 import initSqlJs from 'sql.js';
-import { FINANCE_TABLES, DEFAULT_FINANCE_SETTINGS, coerce } from './schema.js';
+import { FINANCE_TABLES, DEFAULT_FINANCE_SETTINGS, coerce, naturalId } from './schema.js';
 import * as vault from './vault.js';
 
 const PERSIST_DELAY = 300;
 const SYNC_DELAY = 3000;
-const SYNC_INTERVAL = 2 * 60 * 1000;
+const SYNC_INTERVAL = 30 * 1000;
 const TABLES = Object.keys(FINANCE_TABLES);
 const SQL_TYPE = { str: 'TEXT', date: 'TEXT', num: 'REAL', bool: 'INTEGER' };
 
@@ -127,10 +127,37 @@ function transaction(fn) {
   try { fn(); db.run('COMMIT'); } catch (err) { db.run('ROLLBACK'); throw err; }
 }
 
+// Collapse rows that mean the same thing (see schema.naturalId) into one row
+// under the derived id, keeping the most recently edited value. Cleans up
+// duplicates created before ids were derived, or by a device still running
+// older code. Returns true if anything changed (so it needs uploading).
+function dedupe() {
+  let changed = false;
+  const now = Date.now();
+  transaction(() => {
+    for (const tab of TABLES) {
+      const groups = new Map();
+      for (const r of readAll(db, tab, { withMeta: true })) {
+        const nid = !r._deleted && naturalId(tab, r);
+        if (nid) groups.set(nid, [...(groups.get(nid) || []), r]);
+      }
+      for (const [nid, group] of groups) {
+        if (group.length === 1 && group[0].id === nid) continue;
+        const winner = group.reduce((a, b) => (b._updated_at > a._updated_at ? b : a));
+        upsert(tab, { ...winner, id: nid }, winner._updated_at);
+        for (const r of group) if (r.id !== nid) upsert(tab, { id: r.id }, now, 1);
+        changed = true;
+      }
+    }
+  });
+  return changed;
+}
+
 function load(bytes) {
   db?.close();
   db = new SQL.Database(bytes);
   ensureSchema(db);
+  if (dedupe()) localChanges = true;
   for (const tab of TABLES) cache.set(tab, readAll(db, tab));
 }
 
@@ -149,7 +176,7 @@ export async function open(email) {
     key = storedKey;
     salt = storedSalt;
     localChanges = Boolean(pending);
-    load(bytes);
+    load(bytes); // may set localChanges (dedupe)
     setState('ready');
     sync().catch(() => {});
     return state;
@@ -171,7 +198,8 @@ export async function unlock(passphrase) {
   salt = s;
   localChanges = false;
   load(plain);
-  await kvSet({ owner, key, salt, db: db.export(), localChanges: false });
+  await kvSet({ owner, key, salt, db: db.export(), localChanges });
+  if (localChanges) scheduleSync(0);
   status = { syncing: false, error: null, lastSync: Date.now() };
   setState('ready');
 }
@@ -179,6 +207,13 @@ export async function unlock(passphrase) {
 // New vault, optionally seeded with rows ({ table: rows[] }, e.g. from the
 // old spreadsheet tabs), then uploaded.
 export async function create(passphrase, seed) {
+  // Another device may have created the vault since this one checked; never
+  // start a second vault next to it.
+  remote = await vault.find(owner);
+  if (remote) {
+    setState('locked');
+    throw new Error('Your finances were already set up on another device. Enter that passphrase to unlock them here.');
+  }
   salt = vault.newSalt();
   key = await vault.deriveKey(passphrase, salt);
   remote = null;
@@ -238,15 +273,19 @@ function commit(tab, next) {
   scheduleSync();
 }
 
+const idFor = (tab, obj) => obj.id || naturalId(tab, obj) || newId();
+
+// Inserting a row whose id already exists replaces it.
 export function insert(tab, obj) {
-  const row = { ...obj, id: obj.id || newId() };
-  commit(tab, [...rows(tab), row]);
+  const row = { ...obj, id: idFor(tab, obj) };
+  commit(tab, [...rows(tab).filter((r) => r.id !== row.id), row]);
   return row;
 }
 
 export function insertMany(tab, objs) {
-  const added = objs.map((o) => ({ ...o, id: o.id || newId() }));
-  commit(tab, [...rows(tab), ...added]);
+  const added = objs.map((o) => ({ ...o, id: idFor(tab, o) }));
+  const ids = new Set(added.map((r) => r.id));
+  commit(tab, [...rows(tab).filter((r) => !ids.has(r.id)), ...added]);
   return added;
 }
 
@@ -271,7 +310,7 @@ export function setSetting(k, value) {
 // Add or replace rows by id: { table: rows[] }.
 export function importRows(data) {
   for (const tab of TABLES) {
-    const incoming = (data[tab] || []).map((r) => ({ ...r, id: r.id || newId() }));
+    const incoming = (data[tab] || []).map((r) => ({ ...r, id: naturalId(tab, r) || r.id || newId() }));
     if (!incoming.length) continue;
     const ids = new Set(incoming.map((r) => r.id));
     commit(tab, [...rows(tab).filter((r) => !ids.has(r.id)), ...incoming]);
@@ -327,6 +366,7 @@ function mergeFrom(bytes) {
   } finally {
     other.close();
   }
+  if (pulled && dedupe()) oursNewer = true;
   if (pulled) {
     for (const tab of TABLES) cache.set(tab, readAll(db, tab));
     notify();
@@ -380,8 +420,10 @@ export function sync() {
 }
 
 if (typeof window !== 'undefined') {
-  // Pick up other devices' edits when coming back to the app, save and push
-  // ours when leaving, and check in every couple of minutes while open.
+  // Pick up other devices' edits when coming back to the app (tab shown or
+  // window focused), save and push ours when leaving, and check in every 30
+  // seconds while open.
+  window.addEventListener('focus', () => { if (state === 'ready') sync().catch(() => {}); });
   document.addEventListener('visibilitychange', () => {
     if (state !== 'ready') return;
     if (document.visibilityState === 'visible') sync().catch(() => {});
