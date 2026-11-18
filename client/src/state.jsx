@@ -14,7 +14,8 @@ export function useSheetData() {
   return useSyncExternalStore(sheets.subscribe, sheets.getVersion);
 }
 
-export const ACCOUNT_COLORS = ['#4f46e5', '#0f9d58', '#db4437', '#f4b400', '#0097a7', '#ab47bc', '#ff7043', '#5c6bc0'];
+// Muted earth-tone palette (matches --c-* in styles.css).
+export const ACCOUNT_COLORS = ['#5185bf', '#4f9f96', '#c55a4f', '#cfa83f', '#8a7dc6', '#d27a42', '#8a9c4c', '#c46b9b'];
 
 // Per-viewer conveniences only (emails, display names, colors and the sheet
 // ID) — never tokens.

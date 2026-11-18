@@ -175,7 +175,6 @@ export default function Budget() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Budget</h1>
-          <p className="page-sub">Zero-based + envelopes. Assign every dollar, watch each envelope in real time.</p>
         </div>
         <MonthPicker />
       </div>
@@ -189,10 +188,11 @@ export default function Budget() {
               <div className="big-number num" style={{ color: zeroBased ? 'var(--pos)' : data.leftToBudget < 0 ? 'var(--neg)' : 'var(--text)' }}>
                 {fmt.money(data.leftToBudget)}
               </div>
-              <div className="metric-label">
-                {zeroBased ? <span className="pill pos"><Check size={12} /> Zero-based: every dollar assigned</span>
-                  : data.leftToBudget > 0 ? 'Assign the rest to an envelope' : 'Over-assigned — pull back somewhere'}
-              </div>
+              {!zeroBased && (
+                <div className="metric-label">
+                  {data.leftToBudget > 0 ? 'Assign the rest to an envelope' : 'Over-assigned — pull back somewhere'}
+                </div>
+              )}
             </div>
             <div className="ltb-income">
               <label className="metric-label">Expected income</label>

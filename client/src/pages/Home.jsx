@@ -2,17 +2,17 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Plus, Trash2, Circle, CheckCircle2, MapPin, Repeat, X } from 'lucide-react';
 import { useApp } from '../state.jsx';
 import * as agenda from '../lib/agenda.js';
-import { fmt, isoDate } from '../lib/format.js';
+import { fmt, isoDate, shiftDay } from '../lib/format.js';
 import { Modal, AccountDot, AccountError } from '../components/ui.jsx';
+import WeekCalendar from '../components/WeekCalendar.jsx';
 
 const HIDDEN_KEY = 'pfba.home.hiddenAccounts';
 const loadHidden = () => { try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []); } catch { return new Set(); } };
 const saveHidden = (s) => { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...s])); } catch { /* ignore */ } };
 
-function shiftDay(iso, n) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return isoDate(d);
+// Weeks run Sunday–Saturday, like Google Calendar's US default.
+function weekStartOf(iso) {
+  return shiftDay(iso, -new Date(iso + 'T00:00:00').getDay());
 }
 
 function dayLabel(iso) {
@@ -38,16 +38,19 @@ export default function Home() {
   const byEmail = useMemo(() => Object.fromEntries(accounts.map((a) => [a.email, a])), [accounts]);
   const okAccounts = accounts.filter((a) => status[a.email]?.state === 'ok');
   const okKey = okAccounts.map((a) => a.email).join('|');
+  const weekStart = weekStartOf(day);
 
+  // Load the whole week containing `day`; moving between days of the same
+  // week doesn't refetch.
   const load = useCallback(async () => {
     if (!okAccounts.length) { setData({}); return; }
     setLoading(true);
     try {
-      setData(await agenda.loadDay(okAccounts, day));
+      setData(await agenda.loadRange(okAccounts, weekStart, 7));
     } finally {
       setLoading(false);
     }
-  }, [day, okKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [weekStart, okKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   function toggleAccount(email) {
@@ -70,11 +73,16 @@ export default function Home() {
   const visible = (email) => !hidden.has(email);
   const editable = (email) => byEmail[email]?.editable !== false && status[email]?.state === 'ok';
 
-  // Merge events from all visible accounts: all-day first, then by start time.
-  const events = Object.values(data)
+  // Merge the week's events from all visible accounts: all-day first, then by
+  // start time. The day card shows the selected day's slice.
+  const weekEvents = Object.values(data)
     .flatMap((d) => d.events)
     .filter((e) => visible(e.account))
     .sort((a, b) => (b.allDay - a.allDay) || String(a.start).localeCompare(String(b.start)));
+  const events = weekEvents.filter((e) => agenda.onDay(e, day));
+  const weekTasks = Object.values(data)
+    .flatMap((d) => (d.ok ? d.tasks : []))
+    .filter((t) => visible(t.account) && t.due);
 
   // Accounts whose fetch failed, or that aren't connected yet, get an inline
   // error with Reconnect.
@@ -86,6 +94,14 @@ export default function Home() {
   // For the create dialogs: accounts that can be written to, primary first.
   const writableAccounts = okAccounts.filter((a) => a.editable !== false)
     .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0));
+
+  // New event from an empty calendar slot: one hour starting there.
+  const newEventAt = (iso, minutes) => {
+    const local = (d) => `${isoDate(d)}T${hhmm(d)}`;
+    const start = new Date(iso + 'T00:00:00');
+    start.setMinutes(minutes);
+    setEditingEvent({ start: local(start), end: local(new Date(start.getTime() + 3600000)) });
+  };
 
   return (
     <>
@@ -189,6 +205,13 @@ export default function Home() {
           })}
         </div>
       </div>
+
+      <WeekCalendar weekStart={weekStart} day={day} setDay={setDay} loading={loading}
+        events={weekEvents} tasks={weekTasks} byEmail={byEmail}
+        canEditEvent={(e) => e.writable && editable(e.account)}
+        canEditTask={(t) => editable(t.account)}
+        onEditEvent={setEditingEvent} onEditTask={setEditingTask}
+        onCreateAt={writableAccounts.length ? newEventAt : null} />
 
       {editingEvent && (
         <EventModal event={editingEvent} day={day} accounts={writableAccounts} data={data}

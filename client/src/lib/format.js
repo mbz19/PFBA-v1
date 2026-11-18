@@ -39,3 +39,10 @@ export function isoDate(d = new Date()) {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
+
+// yyyy-mm-dd shifted by n days (local time).
+export function shiftDay(iso, n) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return isoDate(d);
+}

@@ -1,8 +1,8 @@
 // Google Calendar + Google Tasks across every connected account. Each request
 // runs as the account that owns the data, and one account failing never hides
-// the others: loadDay() returns a per-account result with its own error.
+// the others: loadRange() returns a per-account result with its own error.
 import { authedFetch } from './auth.js';
-import { isoDate } from './format.js';
+import { shiftDay } from './format.js';
 
 const CAL = 'https://www.googleapis.com/calendar/v3';
 const TASKS = 'https://tasks.googleapis.com/tasks/v1';
@@ -54,10 +54,11 @@ export function forgetAccount(email) {
 }
 
 // ---------------------------------------------------------------------------
-// One day for every account
+// A range of days for every account
 // ---------------------------------------------------------------------------
 function normalizeEvent(e, email, cal) {
   const allDay = !!e.start?.date;
+  const myResponse = e.attendees?.find((a) => a.self)?.responseStatus;
   return {
     id: e.id,
     account: email,
@@ -72,6 +73,8 @@ function normalizeEvent(e, email, cal) {
     end: allDay ? e.end.date : e.end.dateTime,
     htmlLink: e.htmlLink,
     recurring: !!e.recurringEventId,
+    // Invitations not yet accepted; drawn outlined, like Google Calendar.
+    pending: myResponse === 'needsAction' || myResponse === 'tentative',
   };
 }
 
@@ -88,10 +91,10 @@ function normalizeTask(t, email, list) {
   };
 }
 
-async function accountDay(email, dayIso) {
-  const start = new Date(dayIso + 'T00:00:00');
+async function accountRange(email, startIso, days) {
+  const start = new Date(startIso + 'T00:00:00');
   const end = new Date(start);
-  end.setDate(end.getDate() + 1);
+  end.setDate(end.getDate() + days);
   const [cals, lists] = await Promise.all([calendars(email), taskLists(email)]);
   const shown = cals.filter((c) => c.selected);
   const [eventGroups, taskGroups] = await Promise.all([
@@ -115,9 +118,10 @@ async function accountDay(email, dayIso) {
   return { calendars: cals, taskLists: lists, events: eventGroups.flat(), tasks: taskGroups.flat() };
 }
 
+// Events overlapping [startIso, startIso + days) plus all open tasks.
 // accounts: [{ email }]. Returns { [email]: { ok, error, calendars, taskLists, events, tasks } }
-export async function loadDay(accounts, dayIso) {
-  const results = await Promise.allSettled(accounts.map((a) => accountDay(a.email, dayIso)));
+export async function loadRange(accounts, startIso, days) {
+  const results = await Promise.allSettled(accounts.map((a) => accountRange(a.email, startIso, days)));
   const out = {};
   accounts.forEach((a, i) => {
     const r = results[i];
@@ -128,22 +132,25 @@ export async function loadDay(accounts, dayIso) {
   return out;
 }
 
+// Does an event overlap the given day? All-day end dates are exclusive.
+export function onDay(e, iso) {
+  if (e.allDay) return e.start <= iso && iso < e.end;
+  const start = new Date(iso + 'T00:00:00');
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return new Date(e.start) < end && new Date(e.end) > start;
+}
+
 // ---------------------------------------------------------------------------
 // Event writes — always as the owning account
 // ---------------------------------------------------------------------------
-function addDays(iso, n) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return isoDate(d);
-}
-
 // form: { summary, location, description, allDay, date, startTime, endTime, endDate? }
 export function eventBody(form) {
   const tz = timeZone();
   const body = { summary: form.summary, location: form.location || '', description: form.description || '' };
   if (form.allDay) {
     body.start = { date: form.date };
-    body.end = { date: addDays(form.endDate || form.date, 1) };
+    body.end = { date: shiftDay(form.endDate || form.date, 1) };
   } else {
     body.start = { dateTime: `${form.date}T${form.startTime}:00`, timeZone: tz };
     body.end = { dateTime: `${form.endDate || form.date}T${form.endTime}:00`, timeZone: tz };

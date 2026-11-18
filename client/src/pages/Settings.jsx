@@ -48,7 +48,7 @@ export default function Settings() {
             <div key={a.email} className="acct-row">
               <label className="color-pick" title="Account color">
                 <AccountDot color={a.color} size={14} title="Change color" />
-                <input type="color" value={a.color || '#4f46e5'} onChange={(e) => updateAccount(a.email, { color: e.target.value })} />
+                <input type="color" value={a.color || '#5185bf'} onChange={(e) => updateAccount(a.email, { color: e.target.value })} />
               </label>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <input className="input acct-name" value={a.name || ''} aria-label={`Display name for ${a.email}`}
