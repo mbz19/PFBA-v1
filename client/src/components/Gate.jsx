@@ -43,7 +43,6 @@ export default function Gate() {
       <div className="card gate-card">
         <div className="brand" style={{ padding: 0, marginBottom: 16 }}>
           <span className="dot"><Command size={16} /></span>
-          Command Center
         </div>
 
         {!isConfigured() && (

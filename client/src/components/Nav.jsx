@@ -17,7 +17,6 @@ export default function Nav() {
     <nav className="sidebar" aria-label="Primary">
       <div className="brand">
         <span className="dot"><Command size={16} /></span>
-        Command Center
       </div>
       {NAV.map(({ to, label, icon: Icon, end }) => (
         <NavLink
