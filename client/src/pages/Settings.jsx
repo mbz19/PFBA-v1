@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { UserPlus, RefreshCw, Trash2, ExternalLink, LogOut, Star } from 'lucide-react';
-import { useApp } from '../state.jsx';
+import { useEffect, useState } from 'react';
+import { UserPlus, RefreshCw, Trash2, ExternalLink, LogOut, Star, Download, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { useApp, useSheetData } from '../state.jsx';
 import * as sheets from '../lib/sheets.js';
+import * as finance from '../lib/localdb.js';
 import { AccountDot } from '../components/ui.jsx';
 
 export default function Settings() {
@@ -109,7 +110,91 @@ export default function Settings() {
         </p>
       </div>
 
+      <FinanceCard />
+
       <button className="btn" onClick={signOut}><LogOut size={15} /> Sign out</button>
     </>
+  );
+}
+
+function save(bytes, name) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Where finance data lives, sync status, backups, and cleanup of the finance
+// tabs left in the spreadsheet from before the vault.
+function FinanceCard() {
+  useSheetData(); // re-render on sync status changes
+  const { syncing, error, lastSync } = finance.getStatus();
+  const [legacy, setLegacy] = useState([]);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    sheets.legacyFinanceTabs().then((p) => setLegacy(p.map((t) => t.title))).catch(() => {});
+  }, []);
+
+  async function run(label, fn) {
+    setBusy(label);
+    setMsg('');
+    try { await fn(); } catch (err) { setMsg(err.message || 'Something went wrong.'); } finally { setBusy(''); }
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const removeLegacy = () => confirm(
+    'Delete the finance tabs from your Google Sheet? Check that your budget, transactions, recurring bills and goals look right in the app first. This can\'t be undone.',
+  ) && run('legacy', async () => { await sheets.deleteLegacyFinance(); setLegacy([]); });
+  const forget = () => confirm(
+    'Remove your finances from this device? Your encrypted copy in Google Drive stays, and you\'ll need your passphrase to unlock them here again.',
+  ) && run('forget', async () => { await finance.sync().catch(() => {}); await finance.forgetDevice(); window.location.reload(); });
+  const exportPlain = () => confirm(
+    'This downloads an UNENCRYPTED copy anyone with the file can read. Continue?',
+  ) && save(finance.exportSqlite(), `pfba-finance-${stamp}.sqlite`);
+
+  return (
+    <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card-title"><ShieldCheck size={15} /> Finances</div>
+      <p style={{ marginTop: 0 }}>
+        Budget, transactions, recurring bills and goals are stored in SQLite on this device and synced
+        end-to-end encrypted through a hidden app folder in your Google Drive. Google can't read them.
+      </p>
+      <p className="muted" style={{ fontSize: 13 }}>
+        {syncing ? 'Syncing…'
+          : error ? <span className="over-amt">Sync failed: {error}</span>
+          : lastSync ? `Last synced ${new Date(lastSync).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`
+          : 'Not synced yet'}
+        {finance.hasUnsynced() && !syncing && ' · changes waiting to sync'}
+      </p>
+      {legacy.length > 0 && (
+        <div className="acct-error" style={{ alignItems: 'flex-start' }}>
+          <AlertTriangle size={15} style={{ marginTop: 2 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <strong>Old finance tabs are still in your spreadsheet</strong>
+            <div className="faint acct-error-msg">{legacy.join(', ')}: Google can read these. Their data has been moved into your encrypted vault.</div>
+          </div>
+          <button className="btn btn-sm" disabled={!!busy} onClick={removeLegacy}>
+            <Trash2 size={13} /> {busy === 'legacy' ? 'Removing…' : 'Remove from sheet'}
+          </button>
+        </div>
+      )}
+      <div className="row wrap" style={{ gap: 8 }}>
+        <button className="btn btn-sm" disabled={!!busy || syncing} onClick={() => run('sync', finance.sync)}>
+          <RefreshCw size={13} /> Sync now
+        </button>
+        <button className="btn btn-sm" disabled={!!busy} onClick={() => run('enc', async () => save(await finance.exportEncrypted(), `pfba-finance-${stamp}.vault`))}>
+          <Download size={13} /> Encrypted backup
+        </button>
+        <button className="btn btn-sm btn-ghost" disabled={!!busy} onClick={exportPlain}>
+          <Download size={13} /> Unencrypted SQLite file
+        </button>
+        <button className="btn btn-sm btn-danger" disabled={!!busy} onClick={forget}>
+          {busy === 'forget' ? 'Removing…' : 'Forget on this device'}
+        </button>
+      </div>
+      {msg && <div className="pill neg" style={{ marginTop: 12, whiteSpace: 'normal' }}>{msg}</div>}
+    </div>
   );
 }

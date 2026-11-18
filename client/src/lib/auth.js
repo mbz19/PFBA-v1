@@ -22,6 +22,8 @@ const SHEETS_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   // Lets the Drive picker (picker.js) list and open an existing spreadsheet.
   'https://www.googleapis.com/auth/drive.file',
+  // Hidden per-app Drive folder holding the encrypted finance vault (vault.js).
+  'https://www.googleapis.com/auth/drive.appdata',
 ];
 
 // Renew on the next tap once a token is this close to expiring.
@@ -106,7 +108,7 @@ function startRequest({ scope, prompt, hint }) {
           return done(reject, new AuthError(msg, { email: hint, code }));
         }
         if (!window.google.accounts.oauth2.hasGrantedAllScopes(resp, ...scope.split(' ').filter((s) => s.startsWith('https://')))) {
-          return done(reject, new AuthError('Please allow all requested permissions (Calendar, Tasks and, for the primary account, Sheets and Drive).', { email: hint, code: 'scopes' }));
+          return done(reject, new AuthError('Please allow all requested permissions (Calendar, Tasks and, for the primary account, Sheets and Drive app data).', { email: hint, code: 'scopes' }));
         }
         done(resolve, resp);
       },
@@ -251,7 +253,9 @@ if (typeof document !== 'undefined') {
 }
 
 // fetch() as a given account. Retries once after a 401 with a fresh token.
-export async function authedFetch(email, url, { method = 'GET', body, query } = {}) {
+// JSON by default; `raw` sends a Blob/bytes as-is with `contentType`, and
+// `binary` returns the response as an ArrayBuffer.
+export async function authedFetch(email, url, { method = 'GET', body, query, raw, contentType, binary } = {}) {
   const u = new URL(url);
   if (query) for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null) u.searchParams.set(k, v);
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -260,9 +264,10 @@ export async function authedFetch(email, url, { method = 'GET', body, query } = 
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(raw !== undefined ? { 'Content-Type': contentType || 'application/octet-stream' }
+          : body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: raw !== undefined ? raw : body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (res.status === 401 && attempt === 0) { tokens.delete(email.toLowerCase()); continue; }
     if (!res.ok) {
@@ -272,6 +277,7 @@ export async function authedFetch(email, url, { method = 'GET', body, query } = 
       e.email = email;
       throw e;
     }
+    if (binary) return res.arrayBuffer();
     return res.status === 204 ? null : res.json().catch(() => null);
   }
   throw new AuthError('Session expired.', { email, code: 'expired' });

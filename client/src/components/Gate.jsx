@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Command, LogIn, FilePlus2, Link2, Check, Loader2, ArrowRight, FolderOpen } from 'lucide-react';
+import { Command, LogIn, FilePlus2, Link2, Check, Loader2, ArrowRight, FolderOpen, Lock, KeyRound } from 'lucide-react';
 import { useApp, knownAccounts } from '../state.jsx';
 import { isConfigured } from '../lib/auth.js';
 import { isPickerConfigured, preloadPicker, pickSpreadsheet } from '../lib/picker.js';
@@ -129,11 +129,87 @@ export default function Gate() {
 
         {phase === 'loading' && <div className="spinner">Loading your spreadsheet…</div>}
 
+        {phase === 'finance' && <FinanceStep />}
+
         {phase === 'connect-accounts' && <ConnectAccounts />}
 
         {error && <div className="pill neg" style={{ marginTop: 12, whiteSpace: 'normal' }}>{error}</div>}
       </div>
     </div>
+  );
+}
+
+// Unlock the encrypted finance vault on this device, or create it. The
+// passphrase is only used here to derive the key; it is never stored or sent.
+const MIN_PASSPHRASE = 10;
+
+function FinanceStep() {
+  const { financeState, unlockFinance, createFinance, retryFinance, signOut } = useApp();
+  const [pass, setPass] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const isNew = financeState === 'new';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr(null);
+    setBusy(true);
+    try {
+      await (isNew ? createFinance(pass) : unlockFinance(pass));
+    } catch (ex) {
+      setErr(ex.message || 'Something went wrong.');
+      setBusy(false);
+    }
+  };
+
+  if (financeState === 'error') {
+    return (
+      <>
+        <h2 style={{ margin: '0 0 8px' }}>Finances unavailable</h2>
+        <p className="muted" style={{ marginTop: 0 }}>Couldn't reach your encrypted finance vault in Google Drive.</p>
+        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={retryFinance}>Try again</button>
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={signOut}>Sign out</button>
+      </>
+    );
+  }
+
+  const tooShort = isNew && pass.length < MIN_PASSPHRASE;
+  const mismatch = isNew && confirm && pass !== confirm;
+  return (
+    <form onSubmit={submit}>
+      <h2 style={{ margin: '0 0 8px' }}>{isNew ? 'Protect your finances' : 'Unlock your finances'}</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        {isNew
+          ? <>Your budget, transactions, recurring bills and goals are kept in a SQLite database on your devices and synced as an <strong>encrypted</strong> file in a hidden folder of your Google Drive. Google can't read it. Choose a passphrase to encrypt it. Any finance data still in your spreadsheet is moved in.</>
+          : <>Enter your finance passphrase to decrypt your data on this device. You'll only need to do this once per device.</>}
+      </p>
+      <div className="field">
+        <label>{isNew ? 'New passphrase' : 'Passphrase'}</label>
+        <input className="input" type="password" autoFocus value={pass} onChange={(e) => setPass(e.target.value)}
+          autoComplete={isNew ? 'new-password' : 'current-password'} />
+      </div>
+      {isNew && (
+        <div className="field">
+          <label>Confirm passphrase</label>
+          <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+        </div>
+      )}
+      {isNew && (
+        <div className="pill warn" style={{ whiteSpace: 'normal', marginBottom: 12 }}>
+          There is no way to recover a forgotten passphrase. Save it in your password manager.
+        </div>
+      )}
+      {isNew && pass && tooShort && <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>Use at least {MIN_PASSPHRASE} characters.</div>}
+      {mismatch && <div className="faint" style={{ fontSize: 12, marginBottom: 8 }}>Passphrases don't match.</div>}
+      <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
+        disabled={busy || !pass || tooShort || (isNew && pass !== confirm)}>
+        {busy ? <Loader2 size={16} className="spin" /> : isNew ? <KeyRound size={16} /> : <Lock size={16} />}
+        {busy ? (isNew ? ' Encrypting…' : ' Unlocking…') : isNew ? ' Encrypt my finances' : ' Unlock'}
+      </button>
+      {err && <div className="pill neg" style={{ marginTop: 12, whiteSpace: 'normal' }}>{err}</div>}
+      <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={signOut}>Sign out</button>
+    </form>
   );
 }
 

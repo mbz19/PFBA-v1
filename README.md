@@ -2,18 +2,19 @@
 
 A free, static web app (hosted on GitHub Pages) that runs entirely in your browser on phone and desktop.
 
-- **Database:** one Google Spreadsheet owned by your *primary* Google account.
+- **Finances (private):** budget, transactions, recurring bills and goals live in a SQLite database in your browser and sync between your devices as an **end-to-end encrypted** file in a hidden app folder of your primary account's Google Drive. Your passphrase never leaves your devices, so Google only ever stores ciphertext.
+- **Everything else:** settings and workouts live in one Google Spreadsheet owned by your *primary* Google account.
 - **Live data:** Google Calendar and Google Tasks from every Google account you connect (personal, school, work…).
 - **No server.** Sign-in uses Google Identity Services in the browser. Tokens are kept in memory only and never saved.
 
 | Page | What it does | Where the data lives |
 |---|---|---|
 | Home | Today's events + open tasks across all accounts. Create/edit/delete events, create/edit/complete/delete tasks, prev/next day | Google Calendar / Tasks |
-| Budget | Zero-based envelope budget, 50/30/20 bucket split, safe-to-spend, plus the month's transactions | `Budget`, `Transactions`, `Settings` tabs |
-| Recurring | Bills & subscriptions, with suggestions detected from transactions | `Recurring` tab |
-| Goals | Savings goals with projected finish dates | `Goals` tab |
+| Budget | Zero-based envelope budget, 50/30/20 bucket split, safe-to-spend, plus the month's transactions | Encrypted finance vault |
+| Recurring | Bills & subscriptions, with suggestions detected from transactions | Encrypted finance vault |
+| Goals | Savings goals with projected finish dates | Encrypted finance vault |
 | Workouts | One tab per workout; each is an editable list of exercises (sets, reps, weight, notes) | `Workout - <name>` tabs |
-| Settings | Add/remove Google accounts, colors, editable toggle, spreadsheet link | `Settings` tab |
+| Settings | Add/remove Google accounts, colors, editable toggle, spreadsheet link, finance sync & backups | `Settings` tab |
 
 ---
 
@@ -38,6 +39,7 @@ A free, static web app (hosted on GitHub Pages) that runs entirely in your brows
    - `.../auth/calendar.calendarlist.readonly` (lets the app list your calendars so it can show and pick them)
    - `.../auth/tasks`
    - `.../auth/drive.file` (lets the Drive picker open the spreadsheet you choose; the app sees only files you pick or it created)
+   - `.../auth/drive.appdata` (the hidden app folder that holds the encrypted finance vault; the app can't see the rest of your Drive)
    - `openid`, `email`, `profile`
 4. Under **Audience → Test users**, add **every Google account you'll connect** (personal, school, work). Accounts that aren't listed can't sign in while the app is in Testing.
 
@@ -78,7 +80,17 @@ Without this key the app still works; you paste the spreadsheet link instead of 
 1. Open the site and click **Sign in with Google**. The account you choose becomes the **primary** account. It owns the spreadsheet and is the only one that gets the Sheets scope.
 2. Choose **Create a new spreadsheet** (named *PFBA Command Center*), **Choose from Google Drive**, or paste the link to an existing one.
 3. Copy the spreadsheet ID from **Settings → Spreadsheet** into the `VITE_SHEET_ID` repo variable so phones and other browsers open it automatically.
-4. In **Settings → Add account**, connect your other Google accounts. Secondary accounts get Calendar + Tasks only.
+4. **Choose a finance passphrase.** The app encrypts your finances with it. Any finance data still in the spreadsheet is copied into the vault; afterwards, remove the old tabs from **Settings → Finances → Remove from sheet**. Store the passphrase in a password manager: it cannot be recovered.
+5. On each other device (e.g. your phone), sign in with the same primary account and enter the passphrase once. That device keeps the key from then on.
+6. In **Settings → Add account**, connect your other Google accounts. Secondary accounts get Calendar + Tasks only.
+
+## How the finance vault works
+
+- `client/src/lib/localdb.js` keeps the finance tables in SQLite ([sql.js](https://sql.js.org)) and saves it to IndexedDB, so the app is fast and works offline.
+- `client/src/lib/vault.js` encrypts the whole database with AES-256-GCM, using a key derived from your passphrase (PBKDF2-SHA256, 600,000 iterations), and stores it as `pfba-finance.vault` in your Drive's app folder.
+- Devices sync when the app opens, regains focus, a few seconds after an edit, and every two minutes. Edits made on two devices before they sync are merged row by row; if both changed the same row, the newer edit wins. Deletions sync too.
+- **Settings → Finances** shows sync status and offers an encrypted backup, an unencrypted `.sqlite` export (opens in any SQLite tool), and *Forget on this device*.
+- Each device keeps a decrypted copy in that browser's storage. Use *Forget on this device* on any device you stop using.
 
 ## Local development
 
@@ -123,7 +135,7 @@ The schema lives in `client/src/lib/schema.js`.
 
 ## Migrating from the old SQLite app
 
-`scripts/migrate-to-sheets.js` is a dev-only script and is not part of the app bundle. It reads `data/pfba.db` with better-sqlite3 and writes the Budget (categories, allocations, expected income), Transactions, Recurring and Goals data, plus the budget split %, into the spreadsheet.
+`scripts/migrate-to-sheets.js` is a dev-only script and is not part of the app bundle. It predates the encrypted vault: use it only as a bridge for old `data/pfba.db` data (copy into the sheet, let the app import it into the vault, then remove the tabs from the sheet). It reads `data/pfba.db` with better-sqlite3 and writes the Budget (categories, allocations, expected income), Transactions, Recurring and Goals data, plus the budget split %, into the spreadsheet.
 
 ```bash
 npm rebuild better-sqlite3                 # once, if the native module was built on another machine

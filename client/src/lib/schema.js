@@ -40,6 +40,20 @@ export const TABS = {
   Settings: { key: 'str', value: 'str' },
 };
 
+// Finance tables live in the encrypted local SQLite vault (localdb.js), not
+// in the spreadsheet. FinanceSettings holds finance-only settings (key in id).
+export const FINANCE_TABLES = {
+  Transactions: TABS.Transactions,
+  Budget: TABS.Budget,
+  Recurring: TABS.Recurring,
+  Goals: TABS.Goals,
+  FinanceSettings: { id: 'str', value: 'str' },
+};
+export const isFinanceTab = (tab) => Object.hasOwn(FINANCE_TABLES, tab);
+
+// Tabs the spreadsheet still holds (plus one tab per workout).
+export const SHEET_TABS = ['Settings'];
+
 // Each workout (routine) is its own tab named "Workout - <name>", holding the
 // editable list of exercises for that workout.
 export const WORKOUT_PREFIX = 'Workout - ';
@@ -49,15 +63,19 @@ export const WORKOUT_COLUMNS = {
 
 export function columnsFor(tab) {
   if (TABS[tab]) return TABS[tab];
+  if (FINANCE_TABLES[tab]) return FINANCE_TABLES[tab];
   if (tab.startsWith(WORKOUT_PREFIX)) return WORKOUT_COLUMNS;
   throw new Error(`Unknown tab: ${tab}`);
 }
 
 export const DEFAULT_SETTINGS = {
+  accounts: '[]',
+};
+
+export const DEFAULT_FINANCE_SETTINGS = {
   split_needs: '50',
   split_investing: '30',
   split_wants: '20',
-  accounts: '[]',
 };
 
 // Google Sheets date serial (days since 1899-12-30) → yyyy-mm-dd.

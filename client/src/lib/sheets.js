@@ -1,5 +1,8 @@
-// The app's only gateway to Google Sheets. Pages call these functions (via
-// finance.js / workouts.js helpers) and never hit the API directly.
+// The app's data gateway. Pages call these functions (via finance.js /
+// workouts.js helpers) and never hit an API directly. Finance tabs
+// (Transactions, Budget, Recurring, Goals, FinanceSettings) are routed to the
+// encrypted local SQLite store (localdb.js) and never touch Google Sheets;
+// Settings and the workout tabs live in the spreadsheet.
 //
 // Reads: every tab is loaded once with a single values:batchGet and cached in
 // memory. Writes: mutations update the cache immediately (so the UI is
@@ -8,9 +11,17 @@
 // order simple and is cheap at personal-finance scale.
 
 import { authedFetch } from './auth.js';
+import * as local from './localdb.js';
 import {
-  TABS, WORKOUT_PREFIX, SPREADSHEET_TITLE, DEFAULT_SETTINGS, columnsFor, fromCells,
+  TABS, SHEET_TABS, WORKOUT_PREFIX, SPREADSHEET_TITLE, DEFAULT_SETTINGS, DEFAULT_FINANCE_SETTINGS,
+  columnsFor, fromCells, isFinanceTab,
 } from './schema.js';
+
+export const newId = local.newId;
+
+// Finance tabs from before the move to the local vault; read once to import,
+// then deleted from the spreadsheet.
+const LEGACY_FINANCE_TABS = ['Transactions', 'Budget', 'Recurring', 'Goals'];
 
 const API = 'https://sheets.googleapis.com/v4/spreadsheets';
 const FLUSH_DELAY = 800;
@@ -30,18 +41,19 @@ let status = { saving: false, error: null };
 let version = 0;
 
 const notify = () => { version++; listeners.forEach((fn) => fn()); };
-export const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-export const getVersion = () => version;
+// Subscribers hear about spreadsheet and finance-store changes alike.
+export const subscribe = (fn) => {
+  listeners.add(fn);
+  const off = local.subscribe(fn);
+  return () => { listeners.delete(fn); off(); };
+};
+export const getVersion = () => `${version}.${local.getVersion()}`;
 export const getStatus = () => status;
 export const getSpreadsheetId = () => spreadsheetId;
 export const spreadsheetUrl = () => spreadsheetId && `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
 
 const call = (path, opts) => authedFetch(owner, `${API}${path}`, opts);
 const quote = (title) => `'${title.replace(/'/g, "''")}'`;
-
-export function newId() {
-  return (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/-/g, '').slice(0, 12);
-}
 
 // Accepts a raw ID or a full docs.google.com URL.
 export function parseSpreadsheetId(input) {
@@ -59,7 +71,7 @@ export async function createSpreadsheet(ownerEmail) {
     method: 'POST',
     body: {
       properties: { title: SPREADSHEET_TITLE },
-      sheets: Object.keys(TABS).map((title) => ({ properties: { title } })),
+      sheets: SHEET_TABS.map((title) => ({ properties: { title } })),
     },
   });
   return res.spreadsheetId;
@@ -90,7 +102,7 @@ async function getSheetProps() {
 
 async function load() {
   let props = await getSheetProps();
-  const missing = Object.keys(TABS).filter((t) => !props.some((p) => p.title === t));
+  const missing = SHEET_TABS.filter((t) => !props.some((p) => p.title === t));
   if (missing.length) {
     await call(`/${spreadsheetId}:batchUpdate`, {
       method: 'POST',
@@ -98,7 +110,7 @@ async function load() {
     });
     props = await getSheetProps();
   }
-  const wanted = props.filter((p) => TABS[p.title] || p.title.startsWith(WORKOUT_PREFIX));
+  const wanted = props.filter((p) => SHEET_TABS.includes(p.title) || p.title.startsWith(WORKOUT_PREFIX));
   // One read for every tab. batchGet takes repeated `ranges=` params.
   const params = new URLSearchParams({
     valueRenderOption: 'UNFORMATTED_VALUE',
@@ -109,8 +121,7 @@ async function load() {
   data.valueRanges.forEach((vr, i) => hydrate(wanted[i], vr.values || []));
 }
 
-function hydrate(prop, values) {
-  const columns = columnsFor(prop.title);
+function parseValues(columns, values) {
   const sheetHeader = (values[0] || []).map((h) => String(h).trim());
   // Keep any extra columns the user added by hand; append missing schema columns.
   const header = [...sheetHeader.filter(Boolean)];
@@ -121,6 +132,11 @@ function hydrate(prop, values) {
       const cells = header.map((h) => r[sheetHeader.indexOf(h)]);
       return fromCells(header, cells, columns);
     });
+  return { sheetHeader, header, rows };
+}
+
+function hydrate(prop, values) {
+  const { sheetHeader, header, rows } = parseValues(columnsFor(prop.title), values);
   tables.set(prop.title, {
     sheetId: prop.sheetId,
     header,
@@ -142,16 +158,53 @@ export async function reload() {
 }
 
 // ---------------------------------------------------------------------------
+// Finance tabs left in the spreadsheet from before the local vault
+// ---------------------------------------------------------------------------
+export async function legacyFinanceTabs() {
+  return (await getSheetProps()).filter((p) => LEGACY_FINANCE_TABS.includes(p.title));
+}
+
+// { Transactions: rows[], …, FinanceSettings: rows[] } ready for
+// localdb.importRows, or null if there's nothing to import.
+export async function readLegacyFinance() {
+  const props = await legacyFinanceTabs();
+  const out = {};
+  if (props.length) {
+    const params = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'FORMATTED_STRING' });
+    for (const p of props) params.append('ranges', quote(p.title));
+    const data = await authedFetch(owner, `${API}/${spreadsheetId}/values:batchGet?${params}`);
+    data.valueRanges.forEach((vr, i) => { out[props[i].title] = parseValues(TABS[props[i].title], vr.values || []).rows; });
+  }
+  const s = settings();
+  const split = Object.keys(DEFAULT_FINANCE_SETTINGS).filter((k) => s[k] !== undefined).map((k) => ({ id: k, value: s[k] }));
+  if (split.length) out.FinanceSettings = split;
+  return Object.values(out).some((r) => r.length) ? out : null;
+}
+
+// Delete the old finance tabs (and finance settings) from the spreadsheet.
+export async function deleteLegacyFinance() {
+  const props = await legacyFinanceTabs();
+  if (props.length) await structural(props.map((p) => ({ deleteSheet: { sheetId: p.sheetId } })));
+  const keys = Object.keys(DEFAULT_FINANCE_SETTINGS);
+  if (rows('Settings').some((r) => keys.includes(r.key))) removeWhere('Settings', (r) => keys.includes(r.key));
+}
+
+// ---------------------------------------------------------------------------
 // Reads (from cache)
 // ---------------------------------------------------------------------------
 const EMPTY = Object.freeze([]);
 export function rows(tab) {
+  if (isFinanceTab(tab)) return local.rows(tab);
   return tables.get(tab)?.rows ?? EMPTY;
 }
 
 export function settings() {
   return Object.fromEntries(rows('Settings').map((r) => [r.key, r.value]));
 }
+
+// Finance-only settings (budget split) live in the local vault.
+export const financeSettings = () => local.settings();
+export const setFinanceSetting = (key, value) => local.setSetting(key, value);
 
 // ---------------------------------------------------------------------------
 // Writes (cache first, flushed in a batch)
@@ -170,6 +223,7 @@ function touch(tab) {
 }
 
 export function insert(tab, obj) {
+  if (isFinanceTab(tab)) return local.insert(tab, obj);
   const t = table(tab);
   const row = { ...obj };
   if ('id' in columnsFor(tab) && !row.id) row.id = newId();
@@ -179,6 +233,7 @@ export function insert(tab, obj) {
 }
 
 export function insertMany(tab, objs) {
+  if (isFinanceTab(tab)) return local.insertMany(tab, objs);
   const t = table(tab);
   const added = objs.map((o) => ({ ...o, id: o.id || newId() }));
   t.rows = [...t.rows, ...added];
@@ -187,12 +242,14 @@ export function insertMany(tab, objs) {
 }
 
 export function update(tab, id, patch) {
+  if (isFinanceTab(tab)) return local.update(tab, id, patch);
   const t = table(tab);
   t.rows = t.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   touch(tab);
 }
 
 export function removeWhere(tab, pred) {
+  if (isFinanceTab(tab)) return local.removeWhere(tab, pred);
   const t = table(tab);
   t.rows = t.rows.filter((r) => !pred(r));
   touch(tab);

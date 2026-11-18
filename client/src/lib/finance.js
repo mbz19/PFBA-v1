@@ -106,7 +106,7 @@ export const deleteTransaction = (id) =>
 // Budget for a month — ported from server/routes/budget.js
 // ---------------------------------------------------------------------------
 export function splitPct() {
-  const s = sheets.settings();
+  const s = sheets.financeSettings();
   return {
     needs: Number(s.split_needs ?? 50),
     investing: Number(s.split_investing ?? 30),
@@ -115,9 +115,9 @@ export function splitPct() {
 }
 
 export function setSplitPct(next) {
-  sheets.setSetting('split_needs', String(next.needs));
-  sheets.setSetting('split_investing', String(next.investing));
-  sheets.setSetting('split_wants', String(next.wants));
+  sheets.setFinanceSetting('split_needs', String(next.needs));
+  sheets.setFinanceSetting('split_investing', String(next.investing));
+  sheets.setFinanceSetting('split_wants', String(next.wants));
 }
 
 export function setAllocation(year, month, categoryId, amount) {

@@ -4,6 +4,7 @@
 import { createContext, useContext, useState, useCallback, useSyncExternalStore, useRef, useEffect } from 'react';
 import * as auth from './lib/auth.js';
 import * as sheets from './lib/sheets.js';
+import * as finance from './lib/localdb.js';
 import { forgetAccount } from './lib/agenda.js';
 
 const AppCtx = createContext(null);
@@ -44,13 +45,15 @@ export function AppProvider({ children }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
 
-  // signed-out | signing-in | needs-sheet | loading | connect-accounts | ready
+  // signed-out | signing-in | needs-sheet | loading | finance | connect-accounts | ready
   const [phase, setPhase] = useState('signed-out');
   const [error, setError] = useState(null);
   const [primary, setPrimary] = useState(LS.get(PRIMARY_KEY));
   const [status, setStatus] = useState({}); // email -> { state: 'idle'|'connecting'|'ok'|'error', error }
   useSheetData(); // re-read accounts from Settings when the cache changes
   const busy = useRef(false);
+  const profileName = useRef(null); // carried from sign-in to finishOpen
+  const [financeState, setFinanceState] = useState('closed'); // see localdb.open
 
   const signedIn = phase === 'ready' || phase === 'connect-accounts';
   const accounts = signedIn ? parseAccounts(sheets.settings().accounts) : [];
@@ -99,19 +102,61 @@ export function AppProvider({ children }) {
 
   const finishConnecting = useCallback(() => setPhase('ready'), []);
 
-  const openSheet = useCallback(async (id, primaryEmail, profileName) => {
+  // Open the spreadsheet, then the finance vault. A device that already has
+  // the vault key goes straight in; otherwise Gate asks for the passphrase
+  // (or to create one).
+  const openSheet = useCallback(async (id, primaryEmail, name) => {
     setPhase('loading');
+    if (name) profileName.current = name;
     try {
       await sheets.open(id, primaryEmail);
       LS.set(SHEET_KEY, id);
-      finishOpen(primaryEmail, profileName);
     } catch (err) {
       setError(err.status === 404 || err.status === 403
         ? `Can't open that spreadsheet as ${primaryEmail}. Check the ID and that this account owns it.`
         : err.message);
       setPhase('needs-sheet');
+      return;
+    }
+    try {
+      const fs = await finance.open(primaryEmail);
+      setFinanceState(fs);
+      if (fs === 'ready') finishOpen(primaryEmail, profileName.current);
+      else setPhase('finance');
+    } catch (err) {
+      setError(`Couldn't open your finances: ${err.message}`);
+      setFinanceState('error');
+      setPhase('finance');
     }
   }, [finishOpen]);
+
+  // Gate's finance step. Errors (e.g. wrong passphrase) are thrown to the caller.
+  const unlockFinance = useCallback(async (passphrase) => {
+    setError(null);
+    await finance.unlock(passphrase);
+    setFinanceState('ready');
+    finishOpen(primary, profileName.current);
+  }, [primary, finishOpen]);
+
+  // New vault; moves any finance data still in the spreadsheet into it.
+  const createFinance = useCallback(async (passphrase) => {
+    setError(null);
+    const legacy = await sheets.readLegacyFinance();
+    await finance.create(passphrase, legacy);
+    setFinanceState('ready');
+    finishOpen(primary, profileName.current);
+  }, [primary, finishOpen]);
+
+  const retryFinance = useCallback(async () => {
+    setError(null);
+    try {
+      const fs = await finance.open(primary);
+      setFinanceState(fs);
+      if (fs === 'ready') finishOpen(primary, profileName.current);
+    } catch (err) {
+      setError(`Couldn't open your finances: ${err.message}`);
+    }
+  }, [primary, finishOpen]);
 
   // Must be called from a click (opens the Google popup).
   const signIn = useCallback(async ({ switchAccount = false } = {}) => {
@@ -196,6 +241,9 @@ export function AppProvider({ children }) {
 
   const signOut = useCallback(async () => {
     await sheets.flush().catch(() => {});
+    if (finance.getState() === 'ready') await finance.sync().catch(() => {});
+    await finance.close();
+    setFinanceState('closed');
     for (const a of parseAccounts(sheets.settings().accounts)) { auth.disconnect(a.email); forgetAccount(a.email); }
     if (primary) auth.disconnect(primary);
     auth.setWantedAccounts([]);
@@ -224,6 +272,7 @@ export function AppProvider({ children }) {
     year, month, setYear, setMonth, shiftMonth,
     phase, error, primary, accounts, status,
     signIn, createSheet, openExistingSheet, addAccount, reconnect, finishConnecting,
+    financeState, unlockFinance, createFinance, retryFinance,
     updateAccount, removeAccount, signOut, forgetSheet,
     sheetFromEnv: Boolean(import.meta.env.VITE_SHEET_ID),
   };
