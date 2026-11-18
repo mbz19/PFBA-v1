@@ -36,7 +36,6 @@ export default function Workouts() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Workouts</h1>
-          <p className="page-sub">Each workout is its own tab in your spreadsheet.</p>
         </div>
         <button className="btn btn-primary" onClick={() => { setError(''); setNaming({}); }}><Plus size={16} /> New workout</button>
       </div>

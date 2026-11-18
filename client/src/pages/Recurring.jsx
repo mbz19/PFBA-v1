@@ -17,7 +17,6 @@ export default function Recurring() {
   const [editing, setEditing] = useState(null);
 
   const catName = (id) => categories.find((c) => c.id === id)?.name || 'Uncategorized';
-  const totalMonthly = items.reduce((s, i) => s + monthlyEquiv(i.amount, i.frequency), 0);
 
   function confirmSuggestion(s) {
     finance.saveRecurring({
@@ -36,7 +35,7 @@ export default function Recurring() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Recurring</h1>
-          <p className="page-sub">Bills & subscriptions — {fmt.money(totalMonthly)}/mo committed across {items.length} items.</p>
+          <p className="page-sub">For Bills and Subscriptions</p>
         </div>
         <button className="btn btn-primary" onClick={() => setEditing({})}><Plus size={16} /> Add</button>
       </div>

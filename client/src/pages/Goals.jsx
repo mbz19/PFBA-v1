@@ -21,7 +21,6 @@ export default function Goals() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Goals</h1>
-          <p className="page-sub">Milestones with a projected finish line — and the "why" behind each.</p>
         </div>
         <button className="btn btn-primary" onClick={() => setEditing({})}><Plus size={16} /> Add goal</button>
       </div>
